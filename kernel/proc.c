@@ -108,6 +108,9 @@ growproc(int n)
   uint sz;
   
   sz = proc->sz;
+  if(proc->stack)
+      if(sz + n >= (uint)proc->stack - PGSIZE)
+          return -1;
   if(n > 0){
     if((sz = allocuvm(proc->pgdir, sz, sz + n)) == 0)
       return -1;
@@ -229,6 +232,7 @@ wait(void)
         p->parent = 0;
         p->name[0] = 0;
         p->killed = 0;
+        p->stack = 0;
         release(&ptable.lock);
         return pid;
       }

@@ -11,7 +11,8 @@ main(int argc, char *argv[])
     char blah[4096];
 
     char blah2[4096];
-    *(blah2 + 16000) = 1;
+    sbrk(8*1024*1024);
+    *(blah2 - 16000) = 1;
     printf(1, "blah 1 addr: %x\n blah 2 addr: %x\n", blah, blah2);
     exit();
 }

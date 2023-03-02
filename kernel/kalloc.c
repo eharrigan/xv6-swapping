@@ -7,7 +7,7 @@
 #include "param.h"
 #include "mmu.h"
 #include "spinlock.h"
-
+static uint total_pages; //number of 4K sized pages that could exist
 
 
 struct run {
@@ -71,11 +71,11 @@ list_print(node* n) {
 struct {
     struct spinlock lock;
     free_area_t free_areas[MAXORDER];
-} free_area_list;
+} page_allocator;
 
 
-// The allocator keeps track of free blocks in the free_area_list struct
-// the free_area_list contains an array of free areas that keeps
+// The allocator keeps track of free blocks in the page_allocator struct
+// the page_allocator contains an array of free areas that keeps
 // track of free blocks.
 // Each index of the array keeps track of a different size order of
 // free blocks
@@ -117,12 +117,12 @@ print_allocator() {
     void* bounds = (void*) ROUNDDOWN((uint)PHYSTOP, MAXSIZE); //the byte after the last byte of the last page
     for(int i = 0; i < MAXORDER; i++) {
         cprintf("Free list for size %d (%d bytes):\n", i, BLOCKSIZE(i));
-        list_print(free_area_list.free_areas[i].free_list);
+        list_print(page_allocator.free_areas[i].free_list);
 
         unsigned int n_pages = ((uint)bounds - (uint)base) / (BLOCKSIZE(i));
         cprintf("Allocated: \n");
         for(int j = 0; j < n_pages; j++) {
-            cprintf(" %d", bit_is_set(free_area_list.free_areas[i].allocated, j));
+            cprintf(" %d", bit_is_set(page_allocator.free_areas[i].allocated, j));
 
             
         }
@@ -130,7 +130,7 @@ print_allocator() {
         if(i > 0) {
             cprintf("Split: \n");
              for(int j = 0; j < n_pages; j++) {
-                cprintf(" %d", bit_is_set(free_area_list.free_areas[i].split, j));
+                cprintf(" %d", bit_is_set(page_allocator.free_areas[i].split, j));
 
                 
             }
@@ -144,7 +144,7 @@ print_allocator() {
 
 void
 buddy_init(void) {
-    initlock(&free_area_list.lock, "buddy");
+    initlock(&page_allocator.lock, "buddy");
     void* base = (void*)ROUNDUP((uint)end, MAXSIZE);  //the address of the first page
     void* bounds = (void*) ROUNDDOWN((uint)PHYSTOP, MAXSIZE); //the byte after the last byte of the last page
     void* offset = end;
@@ -156,14 +156,14 @@ buddy_init(void) {
         // one bit for every page
         uint n_chars = (((n_pages + 7) >> 3 ) << 3) >> 3;
         //point the allocated bitmap to the current offset;
-        free_area_list.free_areas[i].allocated = offset;
+        page_allocator.free_areas[i].allocated = offset;
         //nothing is allocated so set the whole bitmap to 0
         memset(offset, 0, n_chars);
         //increment the offset by the size of the bitmap
         offset = (void*)((uint)offset +n_chars);
         if(i != 0) {
             //all orders need a split bitmap except order 0
-            free_area_list.free_areas[i].split = offset;
+            page_allocator.free_areas[i].split = offset;
             //nothing has been split yet so set the whole bitmap to 0
             memset(offset, 0, n_chars);
             //increment the offset
@@ -171,8 +171,11 @@ buddy_init(void) {
         }
 
     }
+    
+    
+    
     // the free_list points to the base because every page is available
-    free_area_list.free_areas[MAXSIZE].free_list = base;
+    page_allocator.free_areas[MAXSIZE].free_list = base;
     offset = base;
     for(; (uint)offset + MAXPGSIZE <= (uint)PHYSTOP; offset = (void*)((uint)offset + MAXPGSIZE)) {
         if((uint)offset + 2* MAXPGSIZE > (uint)PHYSTOP) {
@@ -183,6 +186,8 @@ buddy_init(void) {
             ((node*)offset)->next = offset + MAXPGSIZE;
         }
     }
+
+
 }
 
 
@@ -213,66 +218,72 @@ get_address(int i, int o) {
 
 void*
 buddy_alloc(uint size){
-    acquire(&free_area_list.lock);
+    acquire(&page_allocator.lock);
     int min;
     //find a free page with the smallest order that will fit the request
     min = min_order(size);
     int i;
     for(i = min; i < MAXORDER; i++) {
-        if(free_area_list.free_areas[i].free_list) {
+        if(page_allocator.free_areas[i].free_list) {
             break;
         }
     }
     if(i == MAXORDER) {
         //if no free pages were found then return null
-        release(&free_area_list.lock);       
+        release(&page_allocator.lock);       
         return NULL;
     }
 
     //weve found a page, now split it until it is the correct size
     //first pop it from its free list
-    void* p = list_pop(&free_area_list.free_areas[i].free_list);
+    void* p = list_pop(&page_allocator.free_areas[i].free_list);
     //mark it as allocated
-    set_bit(free_area_list.free_areas[i].allocated, get_index(p, i));
+    set_bit(page_allocator.free_areas[i].allocated, get_index(p, i));
     for( ; i > min; i--) {
         //find the other half of the split block that will be free
         void* q = (void*)((uint)p + BLOCKSIZE(i-1));
         //mark the block that was split as such
-        set_bit(free_area_list.free_areas[i].split, get_index(p, i));
+        set_bit(page_allocator.free_areas[i].split, get_index(p, i));
         //mark one of  the resultant split blocks as allocated
-        set_bit(free_area_list.free_areas[i-1].allocated, get_index(p, i-1));
+        set_bit(page_allocator.free_areas[i-1].allocated, get_index(p, i-1));
         //push the free half to its free list;
-        list_push(&(free_area_list.free_areas[i-1].free_list), q);
+        list_push(&(page_allocator.free_areas[i-1].free_list), q);
 
     }
-
-    release(&free_area_list.lock);
+    //if a huge page was allocated that means less small pages are available
+    if(size > 4096)
+        total_pages -= 1024;
+    
+    release(&page_allocator.lock);
     return p;
     
-} 
+}
+
+
+//return the size (0-10) of the page that p points to
 
 uint size_of(void* p) {
     for(int i = 0; i < MAXSIZE; i++) {
-        if(bit_is_set(free_area_list.free_areas[i+1].split, get_index(p, i+1)))
+        if(bit_is_set(page_allocator.free_areas[i+1].split, get_index(p, i+1)))
             return i;
     }
-    return 0;
+    return 10;
 }
 void
 buddy_free(void* p) {
     //first find the size of p, then check for coalescing up to the max size
     uint sz = size_of(p);
 
-    if(!bit_is_set(free_area_list.free_areas[sz].allocated, get_index(p, sz))) {
+    if(!bit_is_set(page_allocator.free_areas[sz].allocated, get_index(p, sz))) {
         return;
     }
     int i = 0;
-    acquire(&free_area_list.lock);
+    acquire(&page_allocator.lock);
     for(i = sz; i < MAXORDER; i++) {
         //get the index of p
         int index = get_index(p, i);
         //set it to unallocated
-        clear_bit(free_area_list.free_areas[i].allocated, index);
+        clear_bit(page_allocator.free_areas[i].allocated, index);
         //get its buddy.
         //case 1: p is the second block in its pair, then we need index -1
         //case 2: p is the first block in its pair, then we need index + 1
@@ -283,14 +294,14 @@ buddy_free(void* p) {
         } else {
             buddy_index = index -1;
         }
-        if(bit_is_set(free_area_list.free_areas[i].allocated, buddy_index)) {
+        if(bit_is_set(page_allocator.free_areas[i].allocated, buddy_index)) {
             //if the buddy is allocated then we're done;
             break;
         }
 
         //remove the buddy from the free list
         void* buddy_address = get_address(buddy_index, i);
-        list_remove(&free_area_list.free_areas[i].free_list, buddy_address);
+        list_remove(&page_allocator.free_areas[i].free_list, buddy_address);
         //if the buddy is the first in its pair, then reset p to be equal to the buddy
         if(buddy_index % 2 == 0) {
             p = buddy_address;
@@ -298,10 +309,13 @@ buddy_free(void* p) {
         //the block one level up is no longer split
         //mark it as such
         if(i < MAXSIZE)
-        clear_bit(free_area_list.free_areas[i+1].split, get_index(p, i+1));
+        clear_bit(page_allocator.free_areas[i+1].split, get_index(p, i+1));
     }
-    list_push(&free_area_list.free_areas[i].free_list, p);
-    release(&free_area_list.lock);
+    if(sz == MAXSIZE) {
+        total_pages += 1024;
+    }
+    list_push(&page_allocator.free_areas[i].free_list, p);
+    release(&page_allocator.lock);
 }
 
 
@@ -312,7 +326,7 @@ kinit(void)
     buddy_init();
 //  char *p;
 //
-//  initlock(&free_area_list.lock, "free_list");
+//  initlock(&page_allocator.lock, "free_list");
 //  //align p to 4MB alignment
 //  p = (char*)PGROUNDUP((uint)end);
 //  for(; p + PGSIZE <= (char*)PHYSTOP; p += PGSIZE)

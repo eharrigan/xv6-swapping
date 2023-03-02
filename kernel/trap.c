@@ -77,7 +77,10 @@ trap(struct trapframe *tf)
     break;
   
   case 14: // If page fault
-    uint addr = tf->esp;
+    uint addr = rcr2();
+    if(addr >= USERTOP) {
+        goto bad;
+    }
     uint new_stack = (uint)proc->stack - 0x1000;
     if(addr >= new_stack 
             && proc->sz + 0x5000 <= new_stack
@@ -85,6 +88,8 @@ trap(struct trapframe *tf)
         // if on the next page, allocate more stack
         if(allocuvm(proc->pgdir, new_stack, new_stack + PGSIZE) == 0) {
             //cant allocate a new page so go to default
+            
+            
             goto bad;
         }
     } else {

@@ -75,6 +75,61 @@ balloc(uint dev)
   panic("balloc: out of blocks");
 }
 
+//allocate 8 consecutive blocks (4096 bytes)
+uint
+balloc_page(uint dev) {
+    //intuition: loop through the free bitmap until you find a free block
+    //check the next 7 blocks 
+    // if all 8 blocks are free then set them to 0, mark them to allocated
+
+    struct buf * bp;
+    struct superblock sb;
+    int block_index, mask, consec_free;
+    readsb(ROOTDEV, &sb);
+    for(int b = 0; b < sb.size; b += BPB) {
+        bp = bread(dev, BBLOCK(b, sb.ninodes));
+        //read the block that contains the bit map for block b
+        for(block_index = 0;
+                block_index + 7 < BPB && b + block_index < sb.size;
+                block_index++) {
+            
+            // try to find 8 free blocks
+            consec_free = 0;
+            for(int i = 0; i < 8; i++) {
+                mask = 1 << (block_index % 8);
+                if((bp->data[block_index/8] & mask) == 0) {
+                    consec_free += 1;
+                    block_index += 1;
+
+                } else {
+                    break;
+                }
+            }
+            
+            if(consec_free == 8) {
+                block_index = block_index - 8;
+                for(int i = 0; i < 8; i++) {
+                    mask = 1 << (block_index % 8);
+                    bp->data[block_index / 8] |= mask;
+                    bwrite(bp);
+                    bzero(dev, b + block_index);
+                    block_index++;
+                }
+                brelse(bp);
+                return b + block_index - 8;
+        
+            }
+
+
+        }
+        brelse(bp);
+
+    }
+    panic("balloc");
+
+}
+
+
 // Free a disk block.
 static void
 bfree(int dev, uint b)

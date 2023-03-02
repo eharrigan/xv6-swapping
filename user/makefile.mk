@@ -47,6 +47,7 @@ USER_CPPFLAGS += -nostdinc
 # disable PIC (position independent code)
 USER_CFLAGS += -fno-pic
 
+
 # do not use GCC builtin funtions (used to optimize common functions)
 USER_CFLAGS += -fno-builtin
 

@@ -54,7 +54,7 @@ exec(char *path, char **argv)
   //  goto bad;
   
     // Allocate a one page stack at just before USERTOP
-  
+    proc->stack = (char*)USERTOP;
     if((sp = allocuvm(pgdir, USERTOP - PGSIZE, USERTOP)) != USERTOP) {
         goto bad;
     }

@@ -11,7 +11,7 @@
 #define LIST  4
 #define BACK  5
 
-#define MAXARGS 10
+#define MAXARGS 8
 
 struct cmd {
   int type;
@@ -64,8 +64,9 @@ runcmd(struct cmd *cmd)
   struct pipecmd *pcmd;
   struct redircmd *rcmd;
 
-  if(cmd == 0)
-    exit();
+  if(cmd == 0) {
+      exit();
+  }
   
   switch(cmd->type){
   default:
@@ -73,8 +74,9 @@ runcmd(struct cmd *cmd)
 
   case EXEC:
     ecmd = (struct execcmd*)cmd;
-    if(ecmd->argv[0] == 0)
-      exit();
+    if(ecmd->argv[0] == 0) {
+        exit();
+    }
     exec(ecmd->argv[0], ecmd->argv);
     printf(2, "exec %s failed\n", ecmd->argv[0]);
     break;
@@ -183,7 +185,6 @@ int
 fork1(void)
 {
   int pid;
-  
   pid = fork();
   if(pid == -1)
     panic("fork");
